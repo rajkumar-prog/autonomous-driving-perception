@@ -1,65 +1,74 @@
-# 🚗 Autonomous Driving Perception System
+# ⚡ NeurOcc — 4D Neuromorphic Occupancy Forecasting
 
-> Real-time multi-task perception pipeline for autonomous vehicles — Lane Detection, Object Detection, Multi-Object Tracking, and Depth Estimation.
-> Built to demonstrate Tesla Autopilot-style computer vision engineering.
+> The first open-source system that combines **event cameras** with **4D voxel occupancy prediction** to forecast the future state of a driving scene — bridging neuromorphic sensing and autonomous vehicle world modeling.
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue)](https://python.org)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.x-orange)](https://pytorch.org)
-[![YOLOv8](https://img.shields.io/badge/YOLOv8-Ultralytics-purple)](https://ultralytics.com)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green)](https://fastapi.tiangolo.com)
+[![SpikingJelly](https://img.shields.io/badge/SpikingJelly-SNN-purple)](https://github.com/freemlwang/spikingjelly)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
 ---
 
-## 🎯 Project Overview
+## 🧠 Why This Doesn't Exist Yet
 
-This project implements a full autonomous driving perception stack that mirrors the core vision systems used in production self-driving vehicles. Given a driving video or camera feed, the system simultaneously:
+Every autonomous driving perception system today uses **frame cameras** (30fps). A child running onto a road takes ~80ms — invisible at 30fps. **Event cameras** capture brightness changes at **microsecond resolution**, firing asynchronously per-pixel.
 
-- Detects and classifies objects (cars, pedestrians, cyclists, trucks)
-- Tracks detected objects across frames with unique IDs
-- Identifies lane boundaries and road geometry
-- Estimates per-object depth/distance from a monocular camera
-- Serves real-time results via a FastAPI inference endpoint
+Existing work:
+- Event cameras → object **detection** (present state only)
+- Frame cameras → 3D occupancy (present state only)
+
+**What NeurOcc does that nobody has:**
+> Fuses event camera streams with RGB frames through a **Spiking Neural Network**, then predicts **4D voxel occupancy** — which 3D grid cells will be occupied at `t+1s`, `t+2s`, `t+3s` in the future.
+
+This is the perception-prediction stack Tesla's world model team is racing toward. No open repo does it.
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ System Architecture
 
 ```
-Input Video / Camera Stream
-         │
-         ▼
-┌─────────────────────┐
-│   Preprocessing     │  ← Frame extraction, resize, normalize
-│   (OpenCV)          │
-└────────┬────────────┘
-         │
-   ┌─────┴──────┐
-   ▼            ▼
-┌──────────┐  ┌──────────────┐
-│  Lane    │  │   Object     │
-│Detection │  │  Detection   │
-│(PolyFit) │  │  (YOLOv8)    │
-└──────────┘  └──────┬───────┘
-                     │
-                     ▼
-              ┌──────────────┐
-              │   Tracking   │
-              │  (ByteTrack) │
-              └──────┬───────┘
-                     │
-                     ▼
-              ┌──────────────┐
-              │    Depth     │
-              │  Estimation  │
-              │   (MiDaS)    │
-              └──────┬───────┘
-                     │
-                     ▼
-              ┌──────────────┐
-              │  FastAPI     │
-              │  Endpoint    │ ← JSON output + annotated frame
-              └──────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                     SENSOR INPUTS                       │
+│  Event Camera Stream          RGB Frame Cameras         │
+│  (μs-resolution events)       (standard 30fps)          │
+└──────────────┬──────────────────────────┬───────────────┘
+               │                          │
+               ▼                          ▼
+┌──────────────────────┐    ┌─────────────────────────┐
+│  SNN Event Encoder   │    │  CNN Frame Encoder      │
+│  (SpikingJelly)      │    │  (ResNet-50 backbone)   │
+│  Spike trains →      │    │  Spatial features →     │
+│  temporal features   │    │  voxel feature volume   │
+└──────────┬───────────┘    └────────────┬────────────┘
+           │                             │
+           └──────────┬──────────────────┘
+                      ▼
+           ┌─────────────────────┐
+           │   Hybrid Fusion     │
+           │   Cross-attention   │
+           │   event × frame     │
+           └──────────┬──────────┘
+                      ▼
+           ┌─────────────────────┐
+           │  4D Occupancy       │
+           │  Transformer        │
+           │                     │
+           │  Input: fused BEV   │
+           │  Output: voxel grid │
+           │  [X, Y, Z, T]       │
+           │  T = {+1s,+2s,+3s}  │
+           └──────────┬──────────┘
+                      ▼
+           ┌─────────────────────┐
+           │  Collision Risk     │
+           │  Scorer             │
+           │  per future frame   │
+           └──────────┬──────────┘
+                      ▼
+           ┌─────────────────────┐
+           │  FastAPI Endpoint   │
+           │  + 3D Visualizer    │
+           └─────────────────────┘
 ```
 
 ---
@@ -67,118 +76,123 @@ Input Video / Camera Stream
 ## 📁 Project Structure
 
 ```
-autonomous-driving-perception/
+neurocc-4d-occupancy-forecasting/
 ├── src/
-│   ├── detection/          # YOLOv8 object detection module
-│   ├── tracking/           # ByteTrack multi-object tracking
-│   ├── lane/               # Lane detection & polynomial fitting
-│   └── depth/              # MiDaS monocular depth estimation
-├── models/                 # Pretrained & fine-tuned weights
-├── data/                   # Dataset samples (BDD100K / nuScenes)
-├── configs/                # Model & pipeline configuration YAMLs
-├── notebooks/              # EDA, training, evaluation notebooks
-├── api/                    # FastAPI inference server
-├── scripts/                # Training, evaluation, export scripts
-├── tests/                  # Unit and integration tests
-└── outputs/                # Annotated videos and inference results
+│   ├── event_processing/     # Event stream parsing, voxel-grid conversion
+│   ├── snn_encoder/          # Spiking Neural Network encoder (SpikingJelly)
+│   ├── fusion/               # Cross-attention event × frame fusion module
+│   ├── occupancy_predictor/  # 4D Transformer for future voxel prediction
+│   ├── risk_scorer/          # Per-timestep collision risk computation
+│   └── visualizer/           # BEV + 3D voxel visualization (Open3D)
+├── models/
+│   ├── snn/                  # SNN weights & configs
+│   ├── occupancy/            # 4D occupancy transformer weights
+│   └── fusion/               # Fusion module weights
+├── data/
+│   ├── dsec/                 # DSEC event-camera driving dataset
+│   ├── nuscenes/             # nuScenes 3D occupancy labels
+│   ├── processed/            # Preprocessed voxel grids
+│   └── samples/              # Quick-start sample sequences
+├── api/                      # FastAPI inference server
+├── configs/                  # YAML configs for all modules
+├── notebooks/                # EDA, training, evaluation notebooks
+├── scripts/                  # Training, evaluation, ONNX export scripts
+└── tests/                    # Unit + integration tests
 ```
 
 ---
 
 ## 🛠️ Tech Stack
 
-| Component | Technology |
-|---|---|
-| Object Detection | YOLOv8 (Ultralytics) |
-| Multi-Object Tracking | ByteTrack / DeepSORT |
-| Lane Detection | OpenCV + Polynomial Fitting |
-| Depth Estimation | MiDaS (Intel) |
-| Training Framework | PyTorch 2.x |
-| Inference API | FastAPI |
-| Containerization | Docker |
-| Experiment Tracking | Weights & Biases |
-| Dataset | BDD100K / nuScenes |
+| Component | Technology | Why |
+|---|---|---|
+| Event Encoding | SpikingJelly (SNN) | Native spike-train processing, energy-efficient |
+| Frame Encoding | PyTorch + ResNet-50 | Proven spatial feature extraction |
+| Fusion | Custom Cross-Attention | Aligns event timing with frame features |
+| 4D Prediction | Custom Transformer | Temporal + spatial attention across voxels |
+| Visualization | Open3D + Matplotlib | 3D voxel rendering |
+| Inference API | FastAPI | Production serving |
+| Experiment Tracking | W&B | Full training observability |
+| Primary Dataset | DSEC (event cam driving) | Real driving + event camera ground truth |
 
 ---
 
 ## 🚀 Getting Started
 
-### Prerequisites
-```bash
-Python 3.10+
-CUDA 11.8+ (GPU recommended)
-Docker (optional)
-```
-
-### Installation
 ```bash
 git clone https://github.com/rajkumar-prog/autonomous-driving-perception.git
 cd autonomous-driving-perception
 pip install -r requirements.txt
 ```
 
-### Run Inference on a Video
+### Download DSEC Dataset
 ```bash
-python scripts/run_inference.py --input data/sample_drive.mp4 --output outputs/result.mp4
+python scripts/download_dsec.py --split train --output data/dsec/
+```
+
+### Preprocess Events to Voxel Grids
+```bash
+python scripts/preprocess_events.py --input data/dsec/ --output data/processed/
+```
+
+### Train the Full Pipeline
+```bash
+python scripts/train.py --config configs/neurocc_full.yaml --wandb
+```
+
+### Run 4D Occupancy Inference
+```bash
+python scripts/infer.py \
+  --events data/samples/sequence_01/events.h5 \
+  --frames data/samples/sequence_01/frames/ \
+  --future-steps 3 \
+  --visualize
 ```
 
 ### Start FastAPI Server
 ```bash
-uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-### Run with Docker
-```bash
-docker build -t autopilot-perception .
-docker run -p 8000:8000 autopilot-perception
+uvicorn api.main:app --host 0.0.0.0 --port 8000
 ```
 
 ---
 
 ## 📊 Datasets
 
-| Dataset | Size | Download |
+| Dataset | Content | Link |
 |---|---|---|
-| BDD100K | 100K driving videos | [bdd-data.berkeley.edu](https://bdd-data.berkeley.edu) |
-| nuScenes | 1000 driving scenes | [nuscenes.org](https://nuscenes.org) |
-| KITTI | Stereo + LiDAR data | [cvlibs.net/datasets/kitti](http://www.cvlibs.net/datasets/kitti) |
-
----
-
-## 📈 Results
-
-| Task | Metric | Score |
-|---|---|---|
-| Object Detection | mAP@0.5 | TBD |
-| Lane Detection | Accuracy | TBD |
-| Tracking | MOTA | TBD |
-| Depth Estimation | AbsRel Error | TBD |
+| DSEC | Driving sequences with event cameras (Zurich) | [dsec.ifi.uzh.ch](https://dsec.ifi.uzh.ch) |
+| nuScenes | 3D occupancy annotations | [nuscenes.org](https://nuscenes.org) |
+| Occ3D | Dense 3D occupancy labels | [GitHub](https://github.com/FANG-MING/occupancy-for-nuscenes) |
 
 ---
 
 ## 🔮 Roadmap
 
-- [ ] YOLOv8 baseline object detection
-- [ ] Lane detection with polynomial fitting
-- [ ] ByteTrack multi-object tracking integration
-- [ ] MiDaS depth estimation
-- [ ] FastAPI inference server
-- [ ] ONNX export for edge deployment (30 FPS target)
-- [ ] Docker containerization
-- [ ] W&B experiment tracking dashboard
-- [ ] TensorRT optimization for real-time inference
+- [ ] Event stream to voxel grid preprocessing pipeline
+- [ ] SNN encoder with SpikingJelly (membrane potential dynamics)
+- [ ] ResNet-50 frame encoder with BEV projection
+- [ ] Cross-attention event x frame fusion module
+- [ ] 4D Occupancy Transformer (predict t+1s, t+2s, t+3s)
+- [ ] Collision risk scoring per predicted timestep
+- [ ] ONNX export targeting 30 FPS on edge hardware
+- [ ] W&B training dashboard with voxel visualizations
+- [ ] FastAPI inference endpoint
+- [ ] Docker deployment
+
+---
+
+## 📄 Related Work
+
+- [Autonomous Driving with SNNs (NeurIPS 2024)](https://arxiv.org/abs/2405.19687) — detection only, no future prediction
+- [EAS-SNN](https://ieeexplore.ieee.org/) — event-based detection, no world model
+- [Tesla FSD Neural Occupancy](https://tesla.com/AI) — proprietary, not open
+
+**NeurOcc is the first open system connecting event cameras + SNNs + 4D future occupancy prediction.**
 
 ---
 
 ## 👤 Author
 
-**Raj Kumar Satya**
+**Raj Kumar Satya** — AI/ML Engineer | W&B • Possible Finance • Razorpay
 - GitHub: [@rajkumar-prog](https://github.com/rajkumar-prog)
-- LinkedIn: [Raj Kumar Satya](https://linkedin.com/in/rajkumarsatya)
 - Email: rajkumarsatya65@gmail.com
-
----
-
-## 📄 License
-
-MIT License — see [LICENSE](LICENSE) for details.
